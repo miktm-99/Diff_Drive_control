@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+import rospy
+import numpy as np
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from tf.transformations import euler_from_quaternion
+import matplotlib.pyplot as plt
+from math import sin, cos, atan2, sqrt, pi
+
+
+class DiffDriveController:
+    def __init__(self):
+        rospy.init_node('diff_drive_non_linear_control')
+        
+        # Parametri del controllore
+        self.control_rate = rospy.get_param('~control_rate', 50)  # Hz
+        self.a = rospy.get_param('~a', 2)
+        self.zeta = rospy.get_param('~zeta', 0.5)
+        self.max_linear_vel = rospy.get_param('~max_linear_vel', 2)
+        self.max_angular_vel = rospy.get_param('~max_angular_vel', 2)
+        
+        # Parametri della traiettoria circolare
+        self.R = 1  # Raggio
+        self.v_d_val = 0.5  # Velocità lineare desiderata
+        self.w_d_val = self.v_d_val / self.R  # Velocità angolare costante
+        
+       
+
+        # Stato del robot
+        self.x = 0.0
+        self.y = 0.0
+        self.theta = 0.0
+        
+        # Publisher e Subscriber
+        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+        self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
+        
+        # Log dati per plotting
+        self.time_log, self.x_log, self.y_log, self.theta_log = [], [], [], []
+        self.x_d_log, self.y_d_log, self.theta_d_log = [], [], []
+        self.v_log, self.w_log = [], []
+        self.vd_log, self.wd_log = [], []
+        
+        # Timer per eseguire il controllo periodicamente
+
+        self.control_timer = rospy.Timer(rospy.Duration(1.0/self.control_rate), self.control_loop)
+
+
+        # Tempo di inizio
+        self.t_start = rospy.Time.now().to_sec()
+    
+    def odom_callback(self, msg):
+        """Aggiorna la posizione attuale del robot dalla odometria"""
+        self.x = msg.pose.pose.position.x
+        self.y = msg.pose.pose.position.y
+        
+        # Converti la quaternion in angolo di Eulero (yaw)
+        orientation_q = msg.pose.pose.orientation
+        orientation_list = [orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w]
+        _, _, self.theta = euler_from_quaternion(orientation_list)
+
+    def control(self, e, v_d, w_d):
+        """Legge di controllo non lineare"""
+        #k1 = 2 * self.zeta * self.a
+        #k2 = (self.a**2-w_d**2)/v_d
+        k3 = k1 = k2 = 3
+        
+        u_1 = -k1 * e[0]
+        u_2 = -k2 * v_d * (sin(e[2]) / e[2] if e[2] != 0 else 1) * e[1] - k3 * e[2]
+        
+        return u_1, u_2
+
+    def compute_tracking_error(self, desired_pose):
+        """Calcola l'errore di tracking"""
+        theta = self.theta
+        R = np.array([
+            [cos(theta), sin(theta), 0],
+            [-sin(theta), cos(theta), 0],
+            [0, 0, 1]
+        ])
+        
+        current_pose = np.array([self.x, self.y, self.theta])
+        pose_error = desired_pose - current_pose
+        e = np.dot(R, pose_error)  # Coordinate errore nel frame del robot
+
+
+        return e
+
+
+
+
+    
+    def control_loop(self, event):
+        """Loop di controllo"""
+        t = rospy.Time.now().to_sec() - self.t_start
+        
+        #Calcola la traiettoria circolare
+        x_d = self.R * np.cos(self.w_d_val * t) - self.R
+        y_d = self.R * np.sin(self.w_d_val * t)
+        dotx_d = -self.R * self.w_d_val * np.sin(self.w_d_val * t)
+        doty_d =  self.R * self.w_d_val * np.cos(self.w_d_val * t)
+        v_d = np.sqrt(dotx_d**2 + doty_d**2)
+        theta_d = np.arctan2(doty_d, dotx_d)
+        w_d = self.w_d_val
+        
+        desired_pose = np.array([x_d, y_d, theta_d])
+        e = self.compute_tracking_error(desired_pose)
+        
+        # Calcola legge di controllo
+        u1, u2 = self.control(e, v_d, w_d)
+        
+        # Calcola le velocità
+        v = v_d * np.cos(e[2]) - u1
+        w = w_d - u2
+
+        # Saturazione delle velocità
+        #v = np.clip(v, -self.max_linear_vel, self.max_linear_vel)
+        #w = np.clip(w, -self.max_angular_vel, self.max_angular_vel)
+        
+        # Pubblica i comandi
+        cmd_msg = Twist()
+        cmd_msg.linear.x = v
+        cmd_msg.angular.z = w
+        self.cmd_pub.publish(cmd_msg)
+        
+        # Log dati
+        self.time_log.append(t)
+        self.x_log.append(self.x)
+        self.y_log.append(self.y)
+        self.theta_log.append(self.theta)
+        self.x_d_log.append(x_d)
+        self.y_d_log.append(y_d)
+        self.theta_d_log.append(theta_d)
+        self.v_log.append(v)
+        self.w_log.append(w)
+        self.vd_log.append(v_d)
+        self.wd_log.append(w_d)
+    
+    def plot_results(self):
+        """Salva i grafici"""
+        plt.figure(figsize=(12, 6))
+
+        plt.subplot(1, 3, 1)
+        plt.plot(self.x_d_log, self.y_d_log, 'r--', label='Desiderata')
+        plt.plot(self.x_log, self.y_log, 'b-', label='Reale')
+        plt.xlabel('X [m]')
+        plt.ylabel('Y [m]')
+        plt.legend()
+        plt.grid()
+        plt.title('Traiettoria')
+
+        plt.subplot(1, 3, 2)
+        plt.plot(self.time_log, self.v_log, 'b', label='v')
+        
+        plt.plot(self.time_log, self.vd_log, 'r--', label='v desiderata')
+        
+        plt.xlabel('Tempo [s]')
+        plt.ylabel('Velocità')
+        plt.legend()
+        plt.grid()
+        plt.title('Velocità lineare')
+        
+        plt.subplot(1, 3, 3)
+        
+        plt.plot(self.time_log, self.w_log, 'b', label='w')
+        
+        plt.plot(self.time_log, self.wd_log, 'r--', label='w desiderata')
+        plt.xlabel('Tempo [s]')
+        plt.ylabel('Velocità')
+        plt.legend()
+        plt.grid()
+        plt.title('Velocità angolare')
+
+        plt.tight_layout()
+        plt.show()
+
+
+        plt.savefig("/root/ws/catkin_ws/src/diff_drive/plot_results.png")
+        rospy.loginfo("Grafici salvati!")
+
+if __name__ == '__main__':
+    try:
+        controller = DiffDriveController()
+        rospy.spin()
+        controller.plot_results()
+    except rospy.ROSInterruptException:
+        pass

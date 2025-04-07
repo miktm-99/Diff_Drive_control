@@ -1,0 +1,47 @@
+<launch>
+  <!-- 1. Avvio Gazebo in empty world -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="paused" value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="gui" value="true"/>
+    <arg name="headless" value="false"/>
+    <arg name="debug" value="false"/>
+    <arg name="verbose" value="true"/>
+  </include>
+
+  <!-- 2. Carica URDF nel parametro robot_description -->
+  <param name="robot_description" command="cat '$(find diff_drive)/diff_drive_description/diff_drive.xacro'"/>
+
+
+  <!-- 3. Spawn del robot in Gazebo -->
+     <arg name="x" default="0"/>
+    <arg name="y" default="0"/>
+    <arg name="z" default="0.5"/>
+
+    <node name="mybot_spawn" pkg="gazebo_ros" type="spawn_model" output="screen"
+          args="-urdf -param robot_description -model diff_drive -x $(arg x) -y $(arg y) -z $(arg z)" />
+
+
+  <!-- 4. Carica i parametri del controller -->
+  <rosparam command="load" 
+            file="$(find diff_drive)/config/controllers.yaml"/>
+
+  <!-- 5. Avvia i controller -->
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" 
+        args="diff_drive_controller joint_state_controller"
+        respawn="false" output="screen"/>
+
+  <!-- 6. Robot State Publisher per TF -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" 
+        type="robot_state_publisher" respawn="false" output="screen">
+    <remap from="/joint_states" to="/diff_drive_controller/joint_states"/>
+  </node>
+
+  <!-- 7. Nodo per avviare lo script python del controllore -->
+  <node name="posture_regulation_controller" pkg="diff_drive" type="posture_regulation_control.py" output="screen">
+    <param name="k1" value="2.0" />
+    <param name="k2" value="0.3" />
+    <param name="k3" value="2.5" />
+    
+  </node>
+</launch>

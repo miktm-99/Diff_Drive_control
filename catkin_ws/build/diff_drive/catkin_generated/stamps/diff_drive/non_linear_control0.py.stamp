@@ -1,0 +1,182 @@
+#!/usr/bin/env python
+import rospy
+import numpy as np
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from tf.transformations import euler_from_quaternion
+import matplotlib.pyplot as plt
+from math import sin, cos, atan2, sqrt, pi
+
+
+class DiffDriveController:
+    def __init__(self):
+        rospy.init_node('diff_drive_non_linear_control')
+        
+        # Parametri del controllore (identici all'originale)
+        self.control_rate = rospy.get_param('~control_rate', 50)  # Hz
+        self.a = rospy.get_param('~a', 1.3)
+        self.zeta = rospy.get_param('~zeta', 1.0)
+        self.max_linear_vel = rospy.get_param('~max_linear_vel', 2)
+        self.max_angular_vel = rospy.get_param('~max_angular_vel', 2)
+        
+        # Punto target invece della traiettoria circolare
+        self.target_x = rospy.get_param('~target_x', 10.0)
+        self.target_y = rospy.get_param('~target_y', 10.0)
+        self.target_theta = rospy.get_param('~target_theta', 0.0)
+        
+        # Velocità desiderata costante (come nell'originale)
+        self.v_d_val = 0.5  # Velocità lineare desiderata
+        self.w_d_val = 0.0  # Velocità angolare desiderata (0 per punto fisso)
+
+        # Stato del robot
+        self.x = 1.0
+        self.y = 1.0
+        self.theta = 0.0
+        
+        # Publisher e Subscriber
+        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+        self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
+        
+        # Log dati per plotting
+        self.time_log, self.x_log, self.y_log, self.theta_log = [], [], [], []
+        self.x_d_log, self.y_d_log, self.theta_d_log = [], [], []
+        self.v_log, self.w_log = [], []
+        self.vd_log, self.wd_log = [], []
+        
+        # Timer per eseguire il controllo periodicamente
+        self.control_timer = rospy.Timer(rospy.Duration(1.0/self.control_rate), self.control_loop)
+
+        # Tempo di inizio
+        self.t_start = rospy.Time.now().to_sec()
+    
+    def odom_callback(self, msg):
+        """Aggiorna la posizione attuale del robot dalla odometria"""
+        self.x = msg.pose.pose.position.x
+        self.y = msg.pose.pose.position.y
+        
+        # Converti la quaternion in angolo di Eulero (yaw)
+        orientation_q = msg.pose.pose.orientation
+        orientation_list = [orientation_q.x, orientation_q.y, orientation_q.z, orientation_q.w]
+        _, _, self.theta = euler_from_quaternion(orientation_list)
+
+    def control(self, e, v_d, w_d):
+        """Legge di controllo non lineare (identica all'originale)"""
+        #k1 = 2*self.zeta*np.sqrt(v_d**2 + self.a*w_d**2)
+        #k2 = self.a
+        #k3 = k1
+        #k1 = 2*self.zeta*a
+        #k2 = (a**2 -w_d**2)/v_d
+        #k3 = k1
+        k1 = self.a
+        k2 = self.zeta
+        k3 = 1.0
+        
+        u_1 = -k1 * e[0]
+        u_2 = -k2 * v_d * (sin(e[2]) / e[2] if e[2] != 0 else 1) * e[1] - k3 * e[2]
+        
+        return u_1, u_2
+
+    def compute_tracking_error(self, desired_pose):
+        """Calcola l'errore di tracking (identico all'originale)"""
+        theta = self.theta
+        R = np.array([
+            [cos(theta), sin(theta), 0],
+            [-sin(theta), cos(theta), 0],
+            [0, 0, 1]
+        ])
+        
+        current_pose = np.array([self.x, self.y, self.theta])
+        pose_error = desired_pose - current_pose
+        e = np.dot(R, pose_error)  # Coordinate errore nel frame del robot
+
+        return e
+    
+    def control_loop(self, event):
+        """Loop di controllo (modificato solo per il punto target)"""
+        t = rospy.Time.now().to_sec() - self.t_start
+        
+        # Punto target fisso invece della traiettoria circolare
+        x_d = self.target_x
+        y_d = self.target_y
+        theta_d = self.target_theta
+        
+        # Velocità desiderate (v_d costante come nell'originale, w_d=0)
+        v_d = self.v_d_val if sqrt((x_d-self.x)**2 + (y_d-self.y)**2) > 0.1 else 0
+        w_d = self.w_d_val
+        
+        desired_pose = np.array([x_d, y_d, theta_d])
+        e = self.compute_tracking_error(desired_pose)
+        
+        # Calcola legge di controllo (identica all'originale)
+        u1, u2 = self.control(e, v_d, w_d)
+        
+        # Calcola le velocità (identica all'originale)
+        v = v_d * np.cos(e[2]) - u1
+        w = w_d - u2
+
+        # Saturazione delle velocità (identica all'originale)
+        #v = np.clip(v, -self.max_linear_vel, self.max_linear_vel)
+        #w = np.clip(w, -self.max_angular_vel, self.max_angular_vel)
+        
+        # Pubblica i comandi
+        cmd_msg = Twist()
+        cmd_msg.linear.x = v
+        cmd_msg.angular.z = w
+        self.cmd_pub.publish(cmd_msg)
+        
+        # Log dati (identico all'originale)
+        self.time_log.append(t)
+        self.x_log.append(self.x)
+        self.y_log.append(self.y)
+        self.theta_log.append(self.theta)
+        self.x_d_log.append(x_d)
+        self.y_d_log.append(y_d)
+        self.theta_d_log.append(theta_d)
+        self.v_log.append(v)
+        self.w_log.append(w)
+        self.vd_log.append(v_d)
+        self.wd_log.append(w_d)
+    
+    def plot_results(self):
+        """Salva i grafici (modificato solo per adattarsi al punto target)"""
+        plt.figure(figsize=(12, 6))
+
+        plt.subplot(1, 3, 1)
+        plt.plot([self.target_x], [self.target_y], 'ro', label='Target')  # Punto target
+        plt.plot(self.x_log, self.y_log, 'b-', label='Reale')
+        plt.xlabel('X [m]')
+        plt.ylabel('Y [m]')
+        plt.legend()
+        plt.grid()
+        plt.title('Traiettoria')
+
+        plt.subplot(1, 3, 2)
+        plt.plot(self.time_log, self.v_log, 'b', label='v')
+        plt.plot(self.time_log, self.vd_log, 'r--', label='v desiderata')
+        plt.xlabel('Tempo [s]')
+        plt.ylabel('Velocità')
+        plt.legend()
+        plt.grid()
+        plt.title('Velocità lineare')
+        
+        plt.subplot(1, 3, 3)
+        plt.plot(self.time_log, self.w_log, 'b', label='w')
+        plt.plot(self.time_log, self.wd_log, 'r--', label='w desiderata')
+        plt.xlabel('Tempo [s]')
+        plt.ylabel('Velocità')
+        plt.legend()
+        plt.grid()
+        plt.title('Velocità angolare')
+
+        plt.tight_layout()
+        plt.show()
+        plt.savefig("/root/ws/catkin_ws/src/diff_drive/plot_results.png")
+        rospy.loginfo("Grafici salvati!")
+
+if __name__ == '__main__':
+    try:
+        controller = DiffDriveController()
+        rospy.spin()
+        controller.plot_results()
+    except rospy.ROSInterruptException:
+        pass
