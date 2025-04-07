@@ -17,6 +17,7 @@ To build:
 cd catkin_ws
 catkin_make
 source devel/setup.bash
+```
 
 ### `catkin_ws/src/diff_drive/`
 Contains the main source code related to the differential drive robot.
@@ -47,6 +48,8 @@ Clone this repository to your local machine:
 ```bash
 git clone https://github.com/miktm-99/Diff_Drive_control.git
 cd Diff_Drive_control
+```
+
 
 ### 3. Build the docker image
 
@@ -55,6 +58,7 @@ From the `docker_ws` directory, build the Docker image:
 ```bash
 cd docker_ws
 docker build -t ros:studenti .
+```
 
 ### 4. Run the container
 Run the container with GUI and X11 forwarding support:
@@ -74,6 +78,7 @@ docker run --rm -it \
   -w /root/ws \
   ros:studenti \
   bash
+```
 
 ### 5. Launch the project
 Once inside the container, navigate to the ROS workspace and build it:
@@ -83,14 +88,18 @@ cd catkin_ws
 catkin_make
 source devel/setup.bash
 roslaunch diff_drive gazebo.launch
+```
 
+To run the python script of the controller, write in another terminal:
+```bash
 rosrun diff_drive non_linear_control.py
+```
 
 ### 6. Exit docker container 
 Once you are done with the simulation, you can exit the Docker container by typing:
 
 ```bash
 exit
-
+```
 
 
