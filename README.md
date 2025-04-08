@@ -92,6 +92,9 @@ roslaunch diff_drive gazebo.launch
 
 To run the python script of the controller, write in another terminal:
 ```bash
+docker ps
+docker exec -it container_name bash
+
 rosrun diff_drive non_linear_control.py
 ```
 
